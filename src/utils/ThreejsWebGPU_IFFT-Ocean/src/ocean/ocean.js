@@ -134,10 +134,10 @@ class OceanChunkManager extends entity.Component {
 		this.params_.waveGenerator.oceanSet.add(params.guiParams.ocean, "wireframe").onChange(() => {
 			this.material_.wireframe = params.guiParams.ocean.wireframe;
 		});
-		this.params_.waveGenerator.oceanSet.add(params.guiParams.ocean, "renderRadius", 100, 5000, 50).onChange((value) => {
+		this.params_.waveGenerator.oceanSet.add(params.guiParams.ocean, "renderRadius", 100, 3000, 30).onChange((value) => {
 			this.material_.colorNode.parameters.renderRadius.value = value;
 		});
-		this.params_.waveGenerator.oceanSet.add(params.guiParams.ocean, "falloffDistance", 10, 500, 10).onChange((value) => {
+		this.params_.waveGenerator.oceanSet.add(params.guiParams.ocean, "falloffDistance", 10, 300, 8).onChange((value) => {
 			this.material_.colorNode.parameters.falloffDistance.value = value;
 		});
 

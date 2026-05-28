@@ -4,7 +4,7 @@ import * as THREE from 'three/webgpu';
 import * as tsl from 'three/tsl';
 
 const MAX_ORBS = 8;
-const MAX_TRAIL_PARTICLES = 350;
+const MAX_TRAIL_PARTICLES = 250;
 
 // Spawning bounds for the corridor close to the ship (so they fly past elegantly)
 const CORRIDOR_WIDTH = 30;

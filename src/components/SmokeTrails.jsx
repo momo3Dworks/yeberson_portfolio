@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { useTexture } from '@react-three/drei';
 import { MeshBasicNodeMaterial } from 'three/webgpu';
 
-const MAX_PARTICLES = 250; // Maximum number of active smoke particles
+const MAX_PARTICLES = 150; // Maximum number of active smoke particles
 
 export default function SmokeTrails({ fireRefs, cursorSpeed, speedFactor }) {
     // Load the 4 cloud textures
@@ -115,7 +115,7 @@ export default function SmokeTrails({ fireRefs, cursorSpeed, speedFactor }) {
 
                     // Color: blend toward magenta when scroll impulse is active
                     const scrollF = speedFactor?.current ?? 0;
-                    const baseColor  = new THREE.Color("#ffaa10"); // naranja
+                    const baseColor = new THREE.Color("#ffaa10"); // naranja
                     const boostColor = new THREE.Color("#ff00cc"); // magenta
                     p.material.color.copy(baseColor).lerp(boostColor, scrollF);
 

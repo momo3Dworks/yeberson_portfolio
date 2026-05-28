@@ -4,7 +4,7 @@ import * as THREE from 'three/webgpu';
 import * as tsl from 'three/tsl';
 import { MeshBasicNodeMaterial } from 'three/webgpu';
 
-const COUNT = 600; // Número de partículas
+const COUNT = 300; // Número de partículas
 const BOUNDS = 180; // Área de esparcimiento
 
 export default function SpeedParticles({ shipRef, cursorSpeed }) {

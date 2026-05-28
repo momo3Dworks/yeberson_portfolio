@@ -44,6 +44,8 @@ class OceanMaterial extends entity.Component {
 			seaColor: uniform(color('#0066ff')),
 			waveColor: uniform(new THREE.Vector3(0.14, 0.25, 0.18)),
 			skyColor: uniform(new THREE.Vector3(0.196, 0.588, 0.785)),
+			shipPosition: uniform(new THREE.Vector3()),
+			shipSpeed: uniform(0.0),
 			roughness: uniform(0.1),
 			metallic: uniform(0.8),
 			opacity: uniform(1.0),
@@ -88,7 +90,9 @@ class OceanMaterial extends entity.Component {
 			screenCoord: screenUV,
 			oceanReflectorColor: params.oceanReflector.context({
 				get uv() {
-					return screenUV.add(sin(time.mul(10.0).add(screenUV.y.mul(50.0))).mul(0.005));
+					const distortion_intensity = uniform(0.05);
+					const customNoise = texture(noiseTexture, screenUV.add(time.mul(0.05)));
+					return screenUV.add(customNoise.xy.sub(0.5).mul(distortion_intensity));
 				}
 			})
 		}

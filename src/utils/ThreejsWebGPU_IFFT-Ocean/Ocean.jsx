@@ -11,10 +11,10 @@ class DummyGUI {
   addColor() { return this; }
   step() { return this; }
   onChange() { return this; }
-  close() {}
+  close() { }
 }
 
-export default function Ocean({ sharedHUD, oceanConfig, oceanReflector }) {
+export default function Ocean({ sharedHUD, oceanConfig, oceanReflector, onLoaded }) {
   const { gl, scene, camera } = useThree();
   const oceanState = useMemo(() => ({ initialized: false, offset: new THREE.Vector2(0, 0) }), []);
 
@@ -36,9 +36,9 @@ export default function Ocean({ sharedHUD, oceanConfig, oceanReflector }) {
         },
         ocean: {
           wireframe: false,
-          renderRadius: 1000.0,
-          falloffDistance: 200.0,
-          seaColor: [0.004, 0.016, 0.047],
+          renderRadius: 175.0,
+          falloffDistance: 30.0,
+          seaColor: [0.4, 0.016, 0.047],
           waveColor: [0.14, 0.25, 0.18],
           skyColor: [0.196, 0.588, 0.785],
           roughness: 0.1,
@@ -79,6 +79,7 @@ export default function Ocean({ sharedHUD, oceanConfig, oceanReflector }) {
         oceanState.waveGen = waveGen;
         oceanState.oceanGen = oceanGen;
         oceanState.initialized = true;
+        if (onLoaded) onLoaded();
       }
     }
 
@@ -98,18 +99,25 @@ export default function Ocean({ sharedHUD, oceanConfig, oceanReflector }) {
 
     oceanState.waveGen.Update_(dt);
     oceanState.oceanGen.Update_(dt);
-    
+
     // Animate globalOffset based on speed
     if (sharedHUD && sharedHUD.current && oceanState.oceanGen.material_) {
       const hud = sharedHUD.current;
       const speed = (hud.scrollVelocity * 600) + (hud.cursorSpeed * 20) + 10; // Base speed + scroll boost + cursor boost
-      
+
       // Move offset.y (which maps to Z axis in 3D since globalOffset is added to morphedPosition.xz)
       // Moving in +Y in the 2D offset means moving in +Z in the 3D world (towards the camera)
       // Since UVs move with offset, subtracting from offset moves the waves towards the camera visually
       oceanState.offset.y -= speed * (delta / 2);
-      
+
       oceanState.oceanGen.material_.colorNode.parameters.globalOffset.value.copy(oceanState.offset);
+      if (hud.shipPosition && oceanState.oceanGen.material_.colorNode.parameters.shipPosition) {
+        oceanState.oceanGen.material_.colorNode.parameters.shipPosition.value.copy(hud.shipPosition);
+        // We also need to pass the speed to the material for dynamic wake intensity
+        if(oceanState.oceanGen.material_.colorNode.parameters.shipSpeed) {
+           oceanState.oceanGen.material_.colorNode.parameters.shipSpeed.value = hud.cursorSpeed;
+        }
+      }
     }
   });
 

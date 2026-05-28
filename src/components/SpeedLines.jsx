@@ -11,11 +11,11 @@ import { color as tslColor, float as tslFloat } from 'three/tsl';
 export default function SpeedLines({ shipRef, speedFactor }) {
   const MAX_LINES = 140;   // instanced pool size
   const MAX_AGE = 0.55; // seconds each line is visible
-  const BURST_COUNT = 18;  // lines spawned per scroll impulse
-  const THRESHOLD = 0.05; // speedFactor value that triggers a burst
+  const BURST_COUNT = 35;  // lines spawned per scroll impulse
+  const THRESHOLD = 0.9; // speedFactor value that triggers a burst
 
   const geometry = useMemo(
-    () => new THREE.CylinderGeometry(0.015, 0.015, 8, 5, 1, true),
+    () => new THREE.CylinderGeometry(0.015, 0.015, 80, 123, 5, true),
     []
   );
   const material = useMemo(() => {
@@ -61,14 +61,14 @@ export default function SpeedLines({ shipRef, speedFactor }) {
     const spread = 4;
     dummy.position.set(
       shipPos.x + (Math.random() - 0.5) * spread,
-      shipPos.y + (Math.random() - 0.5) * spread,
-      shipPos.z - 2 - Math.random() * 6  // slightly ahead of ship
+      shipPos.y + (Math.random() - 2) * spread,
+      shipPos.z - 2 - Math.random() + 17  // slightly ahead of ship
     );
 
     // Align cylinder (Y-up by default) to world -Z (forward)
     const forward = new THREE.Vector3(0, 0, -1);
     dummy.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), forward);
-    dummy.scale.set(1, 1, 1);
+    dummy.scale.set(2, 2, 2);
     dummy.updateMatrix();
     meshRef.current.setMatrixAt(index, dummy.matrix);
     meshRef.current.instanceMatrix.needsUpdate = true;

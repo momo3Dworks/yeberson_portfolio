@@ -105,7 +105,7 @@ function PostProcessing() {
   return null;
 }
 
-function ShipModel({ speedFactor, scrollVelocity, sharedHUD }) {
+function ShipModel({ speedFactor, scrollVelocity, sharedHUD, isReady }) {
   const { gl, camera } = useThree();
   const shipRef = React.useRef();
   const fireTexture = useLoader(THREE.TextureLoader, '/assets/Fire.webp');
@@ -162,10 +162,17 @@ function ShipModel({ speedFactor, scrollVelocity, sharedHUD }) {
   const idleColor = useMemo(() => new THREE.Color("#ff5500"), []); // naranja idle
   const boostColor = useMemo(() => new THREE.Color("#00eeff"), []); // cyan por cursor rápido
   const boostScrollColor = useMemo(() => new THREE.Color("#ff00cc"), []); // magenta por scroll
+  const introProgress = useRef(0);
 
   // Animación suave de rotación y posición según el mouse
   useFrame((state, delta) => {
     if (shipRef.current) {
+      if (!isReady) return; // Wait until ocean & all assets are ready
+
+      if (introProgress.current < 1) {
+        introProgress.current = Math.min(introProgress.current + delta * 0.5, 1); // 2 second intro
+      }
+
       // -- CÁLCULO DE VELOCIDAD --
       const mouseVelX = state.mouse.x - prevMouse.current.x;
       const mouseVelY = state.mouse.y - prevMouse.current.y;
@@ -194,9 +201,6 @@ function ShipModel({ speedFactor, scrollVelocity, sharedHUD }) {
       const targetPosX = isAway.current ? 0 : state.mouse.x * SHIP_MOVE_AMPLITUDE_X;
       const targetPosY = isAway.current ? 0 : state.mouse.y * SHIP_MOVE_AMPLITUDE_Y;
 
-      shipRef.current.position.x = THREE.MathUtils.lerp(shipRef.current.position.x, targetPosX, delta * 2);
-      shipRef.current.position.y = THREE.MathUtils.lerp(shipRef.current.position.y, targetPosY, delta * 2);
-
       // --- Impulse forward thrust based on scroll ---
       // Smoothly decay the impulse magnitude back to 0 each frame
       speedFactor.current = THREE.MathUtils.lerp(speedFactor.current, 0, DECAY);
@@ -208,20 +212,30 @@ function ShipModel({ speedFactor, scrollVelocity, sharedHUD }) {
       }
 
       // --- Write shared HUD data (read by SpeedometerHUD & CockpitHUD) ---
-      if (sharedHUD) {
+      if (sharedHUD && sharedHUD.current) {
         sharedHUD.current.mouseX = state.mouse.x;
         sharedHUD.current.mouseY = state.mouse.y;
         sharedHUD.current.cursorSpeed = cursorSpeed.current;
         sharedHUD.current.scrollVelocity = scrollVelocity ? scrollVelocity.current : 0;
+        if (shipRef.current) sharedHUD.current.shipPosition.copy(shipRef.current.position);
       }
 
       // Lerp position.z toward the impulse target for a smooth surge & return
       const targetZ = -IMPULSE * speedFactor.current;
-      shipRef.current.position.z = THREE.MathUtils.lerp(
-        shipRef.current.position.z,
-        targetZ,
-        delta * 6
-      );
+
+      const basePosX = THREE.MathUtils.lerp(shipRef.current.position.x, targetPosX, delta * 2);
+      const basePosY = THREE.MathUtils.lerp(shipRef.current.position.y, targetPosY, delta * 2);
+      const basePosZ = THREE.MathUtils.lerp(shipRef.current.position.z, targetZ, delta * 6);
+
+      if (introProgress.current < 1) {
+        const t = introProgress.current;
+        const ease = 1 - Math.pow(1 - t, 3); // Cubic ease out
+        shipRef.current.position.x = THREE.MathUtils.lerp(0, basePosX, ease);
+        shipRef.current.position.y = THREE.MathUtils.lerp(30, basePosY, ease);
+        shipRef.current.position.z = THREE.MathUtils.lerp(40, basePosZ, ease);
+      } else {
+        shipRef.current.position.set(basePosX, basePosY, basePosZ);
+      }
 
       // --- Camera FOV eases in and out with the impulse ---
       const targetFov = THREE.MathUtils.lerp(FOV_BASE, FOV_MAX, speedFactor.current);
@@ -392,8 +406,35 @@ function ShipModel({ speedFactor, scrollVelocity, sharedHUD }) {
   );
 }
 
+import { useProgress } from '@react-three/drei';
+
+function CustomLoader({ oceanReady }) {
+  const { progress } = useProgress();
+  const isLoaded = progress === 100 && oceanReady;
+  
+  return (
+    <div style={{
+      position: 'absolute', top: 0, left: 0, width: '100vw', height: '100vh',
+      backgroundColor: '#050510', display: 'flex', flexDirection: 'column',
+      justifyContent: 'center', alignItems: 'center',
+      color: '#00eeff', zIndex: 1000, transition: 'opacity 1s ease', 
+      opacity: isLoaded ? 0 : 1, pointerEvents: isLoaded ? 'none' : 'all',
+      fontFamily: 'monospace'
+    }}>
+      <h2 style={{ letterSpacing: '0.2em', marginBottom: '1rem' }}>SYSTEM BOOT</h2>
+      <div style={{ width: '300px', height: '4px', backgroundColor: '#111', overflow: 'hidden' }}>
+        <div style={{ width: `${progress}%`, height: '100%', backgroundColor: '#00eeff', transition: 'width 0.2s' }} />
+      </div>
+      <div style={{ marginTop: '1rem', opacity: 0.7 }}>
+        {progress < 100 ? `LOADING ASSETS... ${Math.round(progress)}%` : (!oceanReady ? 'INITIALIZING HYDRO-MATRIX...' : 'READY')}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const [dpr, setDpr] = useState(() => window.innerWidth <= 768 ? 0.7 : 0.9);
+  const [dpr, setDpr] = useState(() => window.innerWidth <= 768 ? 0.6 : 0.7);
+  const [oceanReady, setOceanReady] = useState(false);
 
   // Single ref holding the current impulse magnitude (0 = idle, 1 = full)
   const speedFactor = useRef(0);
@@ -410,6 +451,7 @@ export default function App() {
     cursorSpeed: 0,
     scrollVelocity: 0,
     boostTarget: 660, // km/h target on scroll boost (randomised per event)
+    shipPosition: new THREE.Vector3(),
   });
 
   // Register wheel listener once
@@ -438,42 +480,45 @@ export default function App() {
   }, []);
 
   return (
-    <Canvas
-      dpr={dpr}
-      gl={async (props) => {
-        // Initialize the asynchronous WebGPURenderer
-        const renderer = new THREE.WebGPURenderer({ ...props, antialias: true });
-        await renderer.init();
-        return renderer;
-      }}
-      camera={{ position: CAMERA_POSITION, fov: 50 }}
-    >
-      <color attach="background" args={['#000']} />
+    <>
+      <CustomLoader oceanReady={oceanReady} />
+      <Canvas
+        dpr={dpr}
+        gl={async (props) => {
+          // Initialize the asynchronous WebGPURenderer
+          const renderer = new THREE.WebGPURenderer({ ...props, antialias: true });
+          await renderer.init();
+          return renderer;
+        }}
+        camera={{ position: CAMERA_POSITION, fov: 50 }}
+      >
+        <color attach="background" args={['#000']} />
 
-      <Suspense fallback={null}>
-        {/* Lights */}
-        <ambientLight intensity={0.2} />
-        <directionalLight position={[10, 20, 10]} intensity={1.5} />
+        <Suspense fallback={null}>
+          {/* Lights */}
+          <ambientLight intensity={0.2} />
+          <directionalLight position={[10, 20, 10]} intensity={1.5} />
 
-        <ShipModel speedFactor={speedFactor} scrollVelocity={scrollVelocity} sharedHUD={sharedHUD} />
+          <ShipModel speedFactor={speedFactor} scrollVelocity={scrollVelocity} sharedHUD={sharedHUD} isReady={oceanReady} />
 
-        {/* Brutalist speedometer — reads sharedHUD, zero re-renders */}
-        <SpeedometerHUD sharedHUD={sharedHUD} />
+          {/* Brutalist speedometer — reads sharedHUD, zero re-renders */}
+          <SpeedometerHUD sharedHUD={sharedHUD} />
 
-        {/* Full-viewport cockpit overlay — reads sharedHUD, zero re-renders */}
-        <CockpitHUD sharedHUD={sharedHUD} />
+          {/* Full-viewport cockpit overlay — reads sharedHUD, zero re-renders */}
+          <CockpitHUD sharedHUD={sharedHUD} />
 
-        {/* Instanced Futuristic City */}
-        <SciFiCityBackground speedFactor={speedFactor} cityConfig={cityConfig} />
+          {/* Instanced Futuristic City */}
+          <SciFiCityBackground speedFactor={speedFactor} cityConfig={cityConfig} />
 
-        {/* WebGPU IFFT Ocean Simulator */}
-        <Experience sharedHUD={sharedHUD} oceanConfig={oceanConfig} />
+          {/* WebGPU IFFT Ocean Simulator */}
+          <Experience sharedHUD={sharedHUD} oceanConfig={oceanConfig} onLoaded={() => setOceanReady(true)} />
 
-        <PostProcessing />
-      </Suspense>
+          <PostProcessing />
+        </Suspense>
 
-      {/* OrbitControls bloqueados como solicitaste */}
-      <OrbitControls target={CAMERA_TARGET} enableRotate={false} enableZoom={false} enablePan={false} />
-    </Canvas>
+        {/* OrbitControls bloqueados como solicitaste */}
+        <OrbitControls target={CAMERA_TARGET} enableRotate={false} enableZoom={false} enablePan={false} />
+      </Canvas>
+    </>
   );
 }

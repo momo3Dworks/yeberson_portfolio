@@ -1,4 +1,4 @@
-import {wgslFn} from "three/tsl";
+import { wgslFn } from "three/tsl";
 
 
 export const fragmentStageWGSL = wgslFn(`
@@ -15,6 +15,8 @@ export const fragmentStageWGSL = wgslFn(`
         seaColor: vec3<f32>,
         waveColor: vec3<f32>,
         skyColor: vec3<f32>,
+        shipPosition: vec3<f32>,
+        shipSpeed: f32,
         roughness: f32,
         metallic: f32,
         vindex: i32,
@@ -76,10 +78,84 @@ export const fragmentStageWGSL = wgslFn(`
         var normalOcean: vec3<f32> = normalize(vec3(-slope.x, 1.0, -slope.y));
 
         var jakobian: f32 = jacobi0 + jacobi1 + jacobi2;
-        var foam_mix_factor: f32 = min(1, max(0, (-jakobian + foamThreshold) * foamStrength));
+
+        // --- Wake Calculation ---
+        // Ship is in world space, and we compare it with vMorphedPosition (vertex world space before displacement).
+        // Since the ship generally moves by having the ocean scroll backwards (globalOffset),
+        // the ship points towards -Z, and the wake trails off into +Z relative to the ship.
+        var toShip = vMorphedPosition.xz - shipPosition.xz;
+        var wakeZ = toShip.y; // +Z is behind the ship
+        var wakeX = toShip.x; // Lateral distance
+        
+        var wakeIntensity = 0.0;
+        var wakeHeight = 0.0;
+
+        // ── HEIGHT GATE ──────────────────────────────────────────────────────────
+        // Wake/foam only activates when the ship is close to the ocean surface.
+        // smoothstep(highY, lowY, shipY): 0.0 when ship is high (≥10), 1.0 when low (≤2).
+        // TWEAK: raise 10.0 to activate earlier, lower 2.0 to require closer proximity.
+        var heightFactor = smoothstep(1.3, 0.02, shipPosition.y);
+        
+        if (heightFactor > 0.001 && wakeZ > 0.0 && wakeZ < 150.0) {
+            var wakeWidth = wakeZ * 0.45; // V-shape half-angle
+            var distToEdge = abs(abs(wakeX) - wakeWidth);
+            
+            // Wider soft edge (8.0) = smoother, less blocky V-arms
+            var edgeIntensity = smoothstep(8.0, 0.0, distToEdge);
+            var centerIntensity = smoothstep(wakeWidth * 0.8, 0.0, abs(wakeX)) * smoothstep(150.0, 0.0, wakeZ);
+            
+            wakeIntensity = max(edgeIntensity, centerIntensity * 0.5);
+            
+            // ── SMOOTH VALUE NOISE (replaces blocky floor-quantized noise) ────────
+            // Bilinear interpolation between 4 random lattice points → smooth organic edges
+            var noiseCoord1 = samplePos * 0.18 + vec2<f32>(time * 0.04, 0.0);
+            var noiseCoord2 = samplePos * 0.55 + vec2<f32>(0.0, time * 0.025);
+            var i1 = floor(noiseCoord1); var f1 = fract(noiseCoord1);
+            var i2 = floor(noiseCoord2); var f2 = fract(noiseCoord2);
+            // Smooth Hermite interpolation (matches cubic ease)
+            var u1 = f1 * f1 * (3.0 - 2.0 * f1);
+            var u2 = f2 * f2 * (3.0 - 2.0 * f2);
+            var smoothNoise1 = mix(
+                mix(random(i1), random(i1 + vec2<f32>(1.0, 0.0)), u1.x),
+                mix(random(i1 + vec2<f32>(0.0, 1.0)), random(i1 + vec2<f32>(1.0, 1.0)), u1.x),
+                u1.y
+            );
+            var smoothNoise2 = mix(
+                mix(random(i2), random(i2 + vec2<f32>(1.0, 0.0)), u2.x),
+                mix(random(i2 + vec2<f32>(0.0, 1.0)), random(i2 + vec2<f32>(1.0, 1.0)), u2.x),
+                u2.y
+            );
+            // Blend two noise octaves for richer texture
+            var wakeNoise = mix(smoothNoise1, smoothNoise2, 0.45) * 1.8;
+            wakeIntensity *= wakeNoise;
+            
+            // ── FADE-IN near the ship (eliminates the hard pop at wakeZ ≈ 0) ─────
+            // Foam grows gradually from 0 → full over the first 25 units behind the ship.
+            // TWEAK: raise 25.0 to stretch the birth zone further back.
+            var birthFade = smoothstep(0.0, 25.0, wakeZ);
+            wakeIntensity *= birthFade;
+            
+            // Fade out based on distance behind ship (far end)
+            wakeIntensity *= smoothstep(150.0, 10.0, wakeZ);
+            
+            // ── INTENSITY: driven ONLY by height, not by cursor speed ─────────────
+            // TWEAK: multiply heightFactor by a scalar to boost/reduce overall foam.
+            // Default 1.0 = natural. Try 1.5 for heavier foam trail.
+            wakeIntensity *= heightFactor * 0.5;
+            wakeHeight = wakeIntensity * 0.8;
+        }
+        
+        // Combine natural foam with wake foam
+        var foam_mix_factor: f32 = min(1.0, max(0.0, (-jakobian + foamThreshold) * foamStrength + wakeIntensity));
 
         if(dot(normalOcean, -viewDir) < 0.0){
             normalOcean *= -1.0;
+        }
+
+        // Perturb normal with wake
+        if (wakeIntensity > 0.1) {
+            var wakeNormal = normalize(vec3<f32>(sin(samplePos.x * 2.0), 1.0, cos(samplePos.y * 2.0)));
+            normalOcean = normalize(mix(normalOcean, wakeNormal, wakeIntensity * 0.5));
         }
 
         //----------------------------------------------------------------------------------------------------------------
