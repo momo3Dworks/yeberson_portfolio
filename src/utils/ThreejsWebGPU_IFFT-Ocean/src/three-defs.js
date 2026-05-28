@@ -1,0 +1,16 @@
+import * as THREE from "three/webgpu";
+
+import {GUI} from 'three/addons/libs/lil-gui.module.min.js';
+import {OrbitControls} from "three/addons/controls/OrbitControls.js";
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+
+import WebGPU from "three/addons/capabilities/WebGPU.js";
+
+
+export {
+    THREE,
+    GUI,
+    OrbitControls,
+    WebGPU,
+    GLTFLoader
+};
