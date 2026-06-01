@@ -1,4 +1,4 @@
-import { Vector3, Matrix4 } from "three/webgpu";
+import { Vector3, Matrix4 } from "three";
 
 
 const _P = new Vector3();

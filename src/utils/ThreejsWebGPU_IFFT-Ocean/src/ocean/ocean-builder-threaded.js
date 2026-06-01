@@ -1,4 +1,5 @@
 import {ocean_chunk} from './ocean-chunk.js';
+import OceanWorker from './ocean-builder-threaded-worker.js?worker';
 
 
 export const ocean_builder_threaded = (() => {
@@ -9,8 +10,8 @@ export const ocean_builder_threaded = (() => {
 	let _IDs = 0;
 	
 	class WorkerThread {
-		constructor(s) {
-			this.worker_ = new Worker(s, {type: 'module'});
+		constructor() {
+			this.worker_ = new OceanWorker();
 			this.worker_.onmessage = (e) => {
 				this._OnMessage(e);
 			};
@@ -36,8 +37,8 @@ export const ocean_builder_threaded = (() => {
 	
 	
 	class WorkerThreadPool {
-		constructor(sz, entry) {
-			this.workers_ = [...Array(sz)].map(_ => new WorkerThread(entry));
+		constructor(sz) {
+			this.workers_ = [...Array(sz)].map(_ => new WorkerThread());
 			this.free_ = [...this.workers_];
 			this.busy_ = {};
 			this.queue_ = [];
@@ -79,7 +80,7 @@ export const ocean_builder_threaded = (() => {
 			this.pool_ = {};
 			this.old_ = [];
 			
-			this.workerPool_ = new WorkerThreadPool(_NUM_WORKERS, new URL('./ocean-builder-threaded-worker.js', import.meta.url));
+			this.workerPool_ = new WorkerThreadPool(_NUM_WORKERS);
 			
 			this.params_ = params;
 		}
