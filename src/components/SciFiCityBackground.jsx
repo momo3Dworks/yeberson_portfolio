@@ -5,6 +5,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import * as THREE from 'three/webgpu';
 import { texture, time, sin, mix, color, positionWorld, cameraPosition, smoothstep, uniform } from 'three/tsl';
+import { applyGridTransition } from '../utils/GridTransition.js';
 
 const BUILDING_ASSETS = [
   '/assets/Building1.glb',
@@ -21,7 +22,7 @@ const DEPTH_LAYERS = [
   { layer: "Far", z_range: [-160, -400], speed_multiplier: 1.5, count: 10 }
 ];
 
-export default function SciFiCityBackground({ speedFactor, cityConfig }) {
+export default function SciFiCityBackground({ speedFactor, cityConfig, registerTransition }) {
   const { camera, gl } = useThree();
 
   const gltfs = useLoader(GLTFLoader, BUILDING_ASSETS, (loader) => {
@@ -77,6 +78,17 @@ export default function SciFiCityBackground({ speedFactor, cityConfig }) {
           const flicker_noise = sin(time.mul(0.8)).add(1.0).mul(0.5);
           const smooth_mix = mix(0.3, 1.0, flicker_noise);
           mat.emissiveNode = color(mat.emissive).mul(smooth_mix).mul(visibility_factor);
+        }
+
+        if (registerTransition) {
+          registerTransition("SciFiCity", applyGridTransition(mat, {
+            sweepAxis: 'y',
+            sweepDirection: 1, // Bottom to top
+            sweepBounds: [-20, 200], // Adjust based on building heights
+            color: '#00ffff',
+            gridScale: 15,
+            thickness: 0.05
+          }));
         }
       }
       return { geometry: geo, material: mat };

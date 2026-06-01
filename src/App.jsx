@@ -20,6 +20,23 @@ import VolumetricClouds from './components/VolumetricClouds.jsx';
 import SciFiCityBackground from './components/SciFiCityBackground.jsx';
 import Experience from './components/Experience.jsx';
 
+export const appearanceSequence = [
+  {
+    id: "Ocean",
+    sweep_axis: "z",
+    sweep_direction: 1,
+    duration: 2.5,
+    delay: 0.0,
+  },
+  {
+    id: "SciFiCity",
+    sweep_axis: "y",
+    sweep_direction: 1,
+    duration: 2.0,
+    delay: 0.5,
+  }
+];
+
 // --- PARAMETERS TO TWEAK ---
 // Ship Configuration
 const SHIP_POSITION = [0, 5, 2];
@@ -28,7 +45,7 @@ const SHIP_SCALE = [1, 1, 1];
 
 // Ocean Configuration
 const oceanConfig = {
-  renderRadius: 150.0,
+  renderRadius: 250.0,
   falloffDistance: 20.0
 };
 
@@ -163,13 +180,17 @@ function ShipModel({ speedFactor, scrollVelocity, sharedHUD, isReady }) {
   const boostColor = useMemo(() => new THREE.Color("#00eeff"), []); // cyan por cursor rápido
   const boostScrollColor = useMemo(() => new THREE.Color("#ff00cc"), []); // magenta por scroll
   const introProgress = useRef(0);
+  const introWaitTime = useRef(0);
 
   // Animación suave de rotación y posición según el mouse
   useFrame((state, delta) => {
     if (shipRef.current) {
       if (!isReady) return; // Wait until ocean & all assets are ready
 
-      if (introProgress.current < 1) {
+      // Wait 2.5 seconds for the environment sweep
+      if (introWaitTime.current < 2.5) {
+        introWaitTime.current += delta;
+      } else if (introProgress.current < 1) {
         introProgress.current = Math.min(introProgress.current + delta * 0.5, 1); // 2 second intro
       }
 
@@ -411,13 +432,13 @@ import { useProgress } from '@react-three/drei';
 function CustomLoader({ oceanReady }) {
   const { progress } = useProgress();
   const isLoaded = progress === 100 && oceanReady;
-  
+
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, width: '100vw', height: '100vh',
       backgroundColor: '#050510', display: 'flex', flexDirection: 'column',
       justifyContent: 'center', alignItems: 'center',
-      color: '#00eeff', zIndex: 1000, transition: 'opacity 1s ease', 
+      color: '#00eeff', zIndex: 1000, transition: 'opacity 1s ease',
       opacity: isLoaded ? 0 : 1, pointerEvents: isLoaded ? 'none' : 'all',
       fontFamily: 'monospace'
     }}>
@@ -430,6 +451,30 @@ function CustomLoader({ oceanReady }) {
       </div>
     </div>
   );
+}
+
+function TransitionManager({ oceanReady, sharedHUD, transitionUniforms }) {
+  useFrame((state) => {
+    if (sharedHUD.current && oceanReady) {
+      if (!transitionUniforms.current.startTime) {
+        transitionUniforms.current.startTime = state.clock.elapsedTime;
+      }
+
+      const elapsedSinceReady = state.clock.elapsedTime - transitionUniforms.current.startTime;
+      const sweepTime = elapsedSinceReady;
+
+      appearanceSequence.forEach(seq => {
+        const trans = transitionUniforms.current[seq.id];
+        if (trans && trans.uniforms) {
+          let prog = (sweepTime - seq.delay) / seq.duration;
+          prog = Math.max(0, Math.min(1, prog));
+          trans.uniforms.forEach(u => u.value = prog);
+        }
+      });
+    }
+  });
+
+  return null;
 }
 
 export default function App() {
@@ -453,6 +498,15 @@ export default function App() {
     boostTarget: 660, // km/h target on scroll boost (randomised per event)
     shipPosition: new THREE.Vector3(),
   });
+
+  const transitionUniforms = useRef({});
+
+  const registerTransition = (id, uniform) => {
+    if (!transitionUniforms.current[id]) {
+      transitionUniforms.current[id] = { uniforms: [], startTime: null };
+    }
+    transitionUniforms.current[id].uniforms.push(uniform);
+  };
 
   // Register wheel listener once
   useEffect(() => {
@@ -508,10 +562,13 @@ export default function App() {
           <CockpitHUD sharedHUD={sharedHUD} />
 
           {/* Instanced Futuristic City */}
-          <SciFiCityBackground speedFactor={speedFactor} cityConfig={cityConfig} />
+          <SciFiCityBackground speedFactor={speedFactor} cityConfig={cityConfig} registerTransition={registerTransition} />
 
           {/* WebGPU IFFT Ocean Simulator */}
-          <Experience sharedHUD={sharedHUD} oceanConfig={oceanConfig} onLoaded={() => setOceanReady(true)} />
+          <Experience sharedHUD={sharedHUD} oceanConfig={oceanConfig} onLoaded={() => setOceanReady(true)} registerTransition={registerTransition} />
+
+          {/* Transition Manager (handles useFrame for shader animations) */}
+          <TransitionManager oceanReady={oceanReady} sharedHUD={sharedHUD} transitionUniforms={transitionUniforms} />
 
           <PostProcessing />
         </Suspense>

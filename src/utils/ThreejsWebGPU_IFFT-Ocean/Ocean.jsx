@@ -3,6 +3,8 @@ import { useThree, useFrame } from '@react-three/fiber';
 import OceanChunkManager from './src/ocean/ocean.js';
 import { wave_generator } from './src/waves/wave-generator.js';
 import * as THREE from 'three/webgpu';
+import { applyGridTransition } from '../GridTransition.js';
+import GUI from 'three/addons/libs/lil-gui.module.min.js';
 
 // Dummy GUI to prevent errors from the vanilla JS code
 class DummyGUI {
@@ -14,15 +16,18 @@ class DummyGUI {
   close() { }
 }
 
-export default function Ocean({ sharedHUD, oceanConfig, oceanReflector, onLoaded }) {
+export default function Ocean({ sharedHUD, oceanConfig, oceanReflector, onLoaded, registerTransition }) {
   const { gl, scene, camera } = useThree();
   const oceanState = useMemo(() => ({ initialized: false, offset: new THREE.Vector2(0, 0) }), []);
 
+  const SHOW_GUI = false; // Activa o desactiva los controles GUI aquí
+
   useEffect(() => {
     let active = true;
+    let gui = null;
 
     async function initOcean() {
-      const gui = new DummyGUI();
+      gui = SHOW_GUI ? new GUI({ title: 'Ocean Settings' }) : new DummyGUI();
       const guiParams = {
         sky: {
           rayleigh: 3.0,
@@ -36,8 +41,8 @@ export default function Ocean({ sharedHUD, oceanConfig, oceanReflector, onLoaded
         },
         ocean: {
           wireframe: false,
-          renderRadius: 175.0,
-          falloffDistance: 30.0,
+          renderRadius: 270.0,
+          falloffDistance: 45.0,
           seaColor: [0.4, 0.016, 0.047],
           waveColor: [0.14, 0.25, 0.18],
           skyColor: [0.196, 0.588, 0.785],
@@ -76,6 +81,17 @@ export default function Ocean({ sharedHUD, oceanConfig, oceanReflector, onLoaded
       });
 
       if (active) {
+        if (registerTransition) {
+          registerTransition("Ocean", applyGridTransition(oceanGen.material_, {
+            sweepAxis: 'z',
+            sweepDirection: 1, // Sweep from negative to positive
+            sweepBounds: [-2000, 50], // Horizon is at -Z, camera near +Z
+            color: '#00ffff',
+            gridScale: 10,
+            thickness: 0.05
+          }));
+        }
+
         oceanState.waveGen = waveGen;
         oceanState.oceanGen = oceanGen;
         oceanState.initialized = true;
@@ -87,7 +103,9 @@ export default function Ocean({ sharedHUD, oceanConfig, oceanReflector, onLoaded
 
     return () => {
       active = false;
-      // Cleanup logic if supported
+      if (gui && typeof gui.destroy === 'function') {
+        gui.destroy();
+      }
     };
   }, [gl, scene, camera, oceanState]);
 
@@ -114,8 +132,8 @@ export default function Ocean({ sharedHUD, oceanConfig, oceanReflector, onLoaded
       if (hud.shipPosition && oceanState.oceanGen.material_.colorNode.parameters.shipPosition) {
         oceanState.oceanGen.material_.colorNode.parameters.shipPosition.value.copy(hud.shipPosition);
         // We also need to pass the speed to the material for dynamic wake intensity
-        if(oceanState.oceanGen.material_.colorNode.parameters.shipSpeed) {
-           oceanState.oceanGen.material_.colorNode.parameters.shipSpeed.value = hud.cursorSpeed;
+        if (oceanState.oceanGen.material_.colorNode.parameters.shipSpeed) {
+          oceanState.oceanGen.material_.colorNode.parameters.shipSpeed.value = hud.cursorSpeed;
         }
       }
     }
