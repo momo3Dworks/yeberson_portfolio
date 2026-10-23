@@ -125,6 +125,9 @@ export const HandsModel: React.FC<HandsModelProps> = ({
 
   // Synchronize dynamic glass settings and capture backdrop before rendering
   useFrame((state, delta) => {
+    // Guard against zero-sized canvas during resize, orientation change, or initial layout
+    if (state.size.width <= 0 || state.size.height <= 0) return
+
     const time = state.clock.getElapsedTime()
 
     if (glass) {
@@ -157,8 +160,8 @@ export const HandsModel: React.FC<HandsModelProps> = ({
           glassProps?.side === 'FrontSide'
             ? THREE.FrontSide
             : glassProps?.side === 'BackSide'
-            ? THREE.BackSide
-            : THREE.DoubleSide
+              ? THREE.BackSide
+              : THREE.DoubleSide
       }
 
       // Capture transmission backdrop before main render / post-processing pass
@@ -185,11 +188,6 @@ export const HandsModel: React.FC<HandsModelProps> = ({
         1
       )
 
-      // Sweep position:
-      // 'Izq > Der': cursor left (0) illuminates card 0; moving right (1) sweeps to card 5
-      // 'Der > Izq': cursor left (0) illuminates card 5; moving right (1) sweeps to card 0
-      const sweepPos = direction === 'Izq > Der' ? pointerNorm : 1.0 - pointerNorm
-
       const cardCount = 6
       const smoothSpeed = smoothing
 
@@ -200,8 +198,15 @@ export const HandsModel: React.FC<HandsModelProps> = ({
         let targetEmission = minEmission
 
         if (enabled) {
-          // Normalized center of each card along [0, 1] axis
-          const cardCenter = (cardIndex + 0.5) / cardCount
+          // Normalized center of each card along [0, 1] axis aligned with direction:
+          // 'Izq > Der': Card 0 is 0.083 (left), Card 5 (6_vector) is 0.917 (right)
+          // 'Der > Izq': Card 5 (6_vector) is 0.083 (rightmost card, starts sweep!), Card 0 is 0.917
+          const cardCenter =
+            direction === 'Izq > Der'
+              ? (cardIndex + 0.5) / cardCount
+              : (cardCount - 1 - cardIndex + 0.5) / cardCount
+
+          const sweepPos = direction === 'Izq > Der' ? pointerNorm : 1.0 - pointerNorm
           const dist = Math.abs(sweepPos - cardCenter)
 
           if (dist < spread) {
@@ -342,7 +347,7 @@ export const HandsModel: React.FC<HandsModelProps> = ({
       }))
     )
     cardsRef.current = cardItems
-    ;(window as any).__TAROT_CARDS = cardItems
+      ; (window as any).__TAROT_CARDS = cardItems
   }, [modelScene, glass])
 
   return (

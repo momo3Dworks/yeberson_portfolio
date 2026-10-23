@@ -388,6 +388,9 @@ export const PostProcessingPipeline: React.FC<PostProcessingPipelineProps> = ({
 
   // Native render loop execution with priority 1 (overriding R3F's default render loop)
   useFrame((state) => {
+    // Guard against zero-sized canvas during resize, orientation change, or initial layout
+    if (state.size.width <= 0 || state.size.height <= 0) return
+
     if (postProcessingRef.current) {
       try {
         postProcessingRef.current.render()

@@ -209,8 +209,58 @@ export default function App() {
   const pointLight1Ref = useRef<THREE.PointLight | null>(null)
   const pointLight2Ref = useRef<THREE.PointLight | null>(null)
 
-  // ── 1. Camera Controls + Mouse Parallax ──────────────────────
-  const cameraControls = useControls('Camera', {
+  // ── 0. Responsive Mobile Device Detection ────────────────────
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return (
+      window.innerWidth <= 768 ||
+      /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    )
+  })
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(
+        window.innerWidth <= 768 ||
+        /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+      )
+    }
+    window.addEventListener('resize', handleResize)
+    window.addEventListener('orientationchange', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('orientationchange', handleResize)
+    }
+  }, [])
+
+  // ── 0b. Visibilidad de Leva en Viewport (True / False) ───────
+  const [showLeva, setShowLeva] = useState(true)
+  const uiControls = useControls('Ajustes UI & Visibilidad', {
+    showLeva: {
+      value: true,
+      label: 'Mostrar Panel Leva'
+    }
+  })
+
+  // Synchronize state from Leva control
+  useEffect(() => {
+    setShowLeva(uiControls.showLeva)
+  }, [uiControls.showLeva])
+
+  // Keyboard shortcut 'H' to toggle Leva
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key === 'h' || e.key === 'H') {
+        setShowLeva((prev) => !prev)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // ── 1. Desktop Camera Controls + Mouse Parallax ──────────────
+  const cameraControls = useControls('Camera (Desktop)', {
     position: {
       value: { x: 0, y: 0.17, z: 0.35 },
       step: 0.005,
@@ -250,6 +300,65 @@ export default function App() {
       label: 'Parallax Mouse'
     }
   })
+
+  // ── 1b. Configuración Mobile Específica (Cámara, DoF, Bloom) ──
+  const mobileControls = useControls('Configuración Mobile (Cámara, DoF, Bloom)', {
+    forceMobileMode: {
+      value: false,
+      label: 'Forzar Modo Mobile (Test)'
+    },
+    disableBloomOnMobile: {
+      value: true,
+      label: 'Desactivar Bloom en Mobile'
+    },
+    // Mobile Camera
+    mobileCamPos: {
+      value: { x: 0, y: 0.22, z: 0.58 },
+      step: 0.01,
+      label: 'Posición Cámara (Mobile)'
+    },
+    mobileCamTarget: {
+      value: { x: 0, y: 0.02, z: 0 },
+      step: 0.01,
+      label: 'Target Cámara (Mobile)'
+    },
+    mobileCamFov: {
+      value: 52,
+      min: 25,
+      max: 85,
+      step: 1,
+      label: 'FOV (Mobile)'
+    },
+    // Mobile DoF
+    mobileDofFocus: {
+      value: 0.52,
+      min: 0.1,
+      max: 2.0,
+      step: 0.01,
+      label: 'DoF Focus Distance (Mobile)'
+    },
+    mobileDofAperture: {
+      value: 0.015,
+      min: 0.001,
+      max: 0.2,
+      step: 0.002,
+      label: 'DoF Aperture (Mobile)'
+    },
+    mobileDofMaxBlur: {
+      value: 0.018,
+      min: 0.001,
+      max: 0.05,
+      step: 0.001,
+      label: 'DoF Max Blur (Mobile)'
+    }
+  })
+
+  const isMobileActive = isMobile || mobileControls.forceMobileMode
+
+  // Responsive Camera
+  const activeCameraPos = isMobileActive ? mobileControls.mobileCamPos : cameraControls.position
+  const activeCameraTarget = isMobileActive ? mobileControls.mobileCamTarget : cameraControls.target
+  const activeCameraFov = isMobileActive ? mobileControls.mobileCamFov : cameraControls.fov
 
   // ── 2. Directional Key Light ─────────────────────────────────
   const directionalLightControls = useControls('Directional Light', {
@@ -687,7 +796,7 @@ export default function App() {
       label: 'Emisión Default (Base)'
     },
     maxEmission: {
-      value: 8.0,
+      value: 5.0,
       min: 0.5,
       max: 50.0,
       step: 0.1,
@@ -858,7 +967,8 @@ export default function App() {
     <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
       {/* ── Leva Controls Panel (Floating Theme) ───────────────── */}
       <Leva
-        collapsed={false}
+        hidden={!showLeva}
+        collapsed={true}
         oneLineLabels={false}
         titleBar={{ title: 'R3F WebGPU Studio • Controles' }}
         theme={{
@@ -881,6 +991,37 @@ export default function App() {
         }}
       />
 
+      {/* ── Floating Toggle Button to Show/Hide Leva ───────────── */}
+      <button
+        onClick={() => setShowLeva((prev) => !prev)}
+        style={{
+          position: 'fixed',
+          bottom: '18px',
+          right: '18px',
+          zIndex: 99999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '8px 14px',
+          background: showLeva ? 'rgba(15, 23, 42, 0.8)' : 'rgba(2, 132, 199, 0.9)',
+          backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(255, 255, 255, 0.22)',
+          borderRadius: '9999px',
+          color: '#ffffff',
+          fontSize: '12px',
+          fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          fontWeight: 600,
+          cursor: 'pointer',
+          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.5)',
+          transition: 'all 0.25s ease',
+          userSelect: 'none'
+        }}
+        title="Presiona 'H' o haz clic para alternar la visibilidad de Leva"
+      >
+        <span style={{ fontSize: '13px' }}>{showLeva ? '👁️' : '⚙️'}</span>
+        <span>{showLeva ? 'Ocultar Leva (H)' : 'Mostrar Leva (H)'}</span>
+      </button>
+
       {/* ── 3D Native WebGPU / R3F Canvas ──────────────────────── */}
       <div className="canvas-container">
         <Canvas
@@ -889,11 +1030,11 @@ export default function App() {
           performance={{ min: 0.5 }}
           camera={{
             position: [
-              cameraControls.position.x,
-              cameraControls.position.y,
-              cameraControls.position.z
+              activeCameraPos.x,
+              activeCameraPos.y,
+              activeCameraPos.z
             ],
-            fov: cameraControls.fov,
+            fov: activeCameraFov,
             near: cameraControls.near,
             far: cameraControls.far
           }}
@@ -953,11 +1094,11 @@ export default function App() {
             lerpSpeed={perfControls.lerpSpeed}
           />
 
-          {/* Direct Camera Controller with Smooth Mouse Parallax */}
+          {/* Direct Camera Controller with Smooth Mouse Parallax (Responsive Desktop/Mobile) */}
           <CameraController
-            position={cameraControls.position}
-            target={cameraControls.target}
-            fov={cameraControls.fov}
+            position={activeCameraPos}
+            target={activeCameraTarget}
+            fov={activeCameraFov}
             near={cameraControls.near}
             far={cameraControls.far}
             parallaxIntensity={cameraControls.parallaxIntensity}
@@ -1097,16 +1238,19 @@ export default function App() {
             {/* Native Three.js WebGPU Post-Processing Pipeline */}
             <PostProcessingPipeline
               bloomSettings={{
-                enabled: postControls.bloomEnabled,
+                enabled:
+                  isMobileActive && mobileControls.disableBloomOnMobile
+                    ? false
+                    : postControls.bloomEnabled,
                 strength: postControls.bloomStrength,
                 radius: postControls.bloomRadius,
                 threshold: postControls.bloomThreshold
               }}
               dofSettings={{
                 enabled: postControls.dofEnabled,
-                focus: postControls.dofFocus,
-                aperture: postControls.dofAperture,
-                maxblur: postControls.dofMaxBlur
+                focus: isMobileActive ? mobileControls.mobileDofFocus : postControls.dofFocus,
+                aperture: isMobileActive ? mobileControls.mobileDofAperture : postControls.dofAperture,
+                maxblur: isMobileActive ? mobileControls.mobileDofMaxBlur : postControls.dofMaxBlur
               }}
               vignetteSettings={{
                 enabled: postControls.vignetteEnabled,
