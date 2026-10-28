@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo } from 'react'
+import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { useGLTF, useAnimations } from '@react-three/drei'
 import { useThree, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
@@ -6,6 +6,14 @@ import { configureGLTFLoader, ensureWebGPUGeometry } from '../utils/gltfLoaders'
 import { createGlass } from '../glass/create-glass.js'
 import { updateGlass, GlassSettings } from '../glass/update-glass'
 import { captureTransmissionBackdrop } from '../glass/transmissionBackdrop.js'
+import {
+  TAROT_SECTIONS,
+  TarotSectionConfig,
+  frameToSeconds,
+  secondsToFrame,
+  quantizeTimeToFps,
+  BLENDER_EXPORT_FPS
+} from '../config/tarotSections'
 
 export interface GlassMaterialProps {
   transmission?: number
@@ -39,14 +47,28 @@ export interface TarotSweepProps {
   smoothing: number
 }
 
-interface HandsModelProps {
-  isPlaying: boolean
-  animationSpeed: number
+export interface HandsModelProps {
+  isPlaying?: boolean
+  animationSpeed?: number
   position?: [number, number, number]
   rotation?: [number, number, number]
   scale?: number | [number, number, number]
   glassProps?: GlassMaterialProps
   tarotSweep?: TarotSweepProps
+  // ── Tarot Navigation via 'AllCards' ──────────────────────
+  sections?: TarotSectionConfig[]
+  activeStep?: number
+  onStepChange?: (step: number, section: TarotSectionConfig | null) => void
+  enableScrollNavigation?: boolean
+  smoothSpeed?: number
+  /** Si está activo, cuantiza los fotogramas de la animación a targetFps exactos (estilo cinematográfico 30 FPS) */
+  quantizeFps?: boolean
+  /** FPS de referencia para la línea de tiempo y cuantización (por defecto 30 FPS) */
+  targetFps?: number
+  /** Modo de transición entre pasos: 'smooth' (curva controlada), 'linear' (velocidad constante), 'spring' (elástico) */
+  transitionMode?: 'smooth' | 'linear' | 'spring'
+  /** Modo de reproducción: 'step-snap' (snap entre cartas) o 'continuous' (reproducción continua libre) */
+  playMode?: 'step-snap' | 'continuous'
   onModelLoaded?: (info: { animations: string[]; nodeCount: number }) => void
 }
 
@@ -57,7 +79,7 @@ interface CardMaterialItem {
   material: THREE.MeshStandardMaterial
 }
 
-const MODEL_PATH = '/models/hands_skills.glb'
+const MODEL_PATH = '/models/hands_skills_compressed.glb'
 
 function getCardIndex(meshName: string, matName: string, parentName?: string): number {
   const combined = `${meshName} ${matName} ${parentName || ''}`.toLowerCase()
@@ -73,17 +95,26 @@ function getCardIndex(meshName: string, matName: string, parentName?: string): n
 }
 
 /**
- * WebGPU HandsModel using Anderson Mancini's (ektogamat/r3f-alpha-6) Glass Transmission
- * and interactive Tarot cards emission sweep.
+ * WebGPU HandsModel using Anderson Mancini's (ektogamat/r3f-alpha-6) Glass Transmission,
+ * interactive Tarot cards emission sweep, and step-based scroll snapping for 'AllCards'.
  */
 export const HandsModel: React.FC<HandsModelProps> = ({
-  isPlaying,
-  animationSpeed,
+  isPlaying = true,
+  animationSpeed = 1.0,
   position = [0, -0.05, 0],
   rotation = [0, 0, 0],
   scale = 1,
   glassProps,
   tarotSweep,
+  sections = TAROT_SECTIONS,
+  activeStep: activeStepProp,
+  onStepChange,
+  enableScrollNavigation = true,
+  smoothSpeed = 4.5,
+  quantizeFps = false,
+  targetFps = 30,
+  transitionMode = 'smooth',
+  playMode = 'step-snap',
   onModelLoaded
 }) => {
   const groupRef = useRef<THREE.Group>(null)
@@ -92,6 +123,19 @@ export const HandsModel: React.FC<HandsModelProps> = ({
   // Track the 6 Tarot card meshes and materials
   const cardsRef = useRef<CardMaterialItem[]>([])
   const cardEmissions = useRef<number[]>([0.05, 0.05, 0.05, 0.05, 0.05, 0.05])
+
+  // ── Tarot Step State & Playback Timeline Refs ───────────────
+  const [internalStep, setInternalStep] = useState<number>(activeStepProp ?? 0)
+  const currentStepRef = useRef<number>(activeStepProp ?? 0)
+  const currentTimeRef = useRef<number>(frameToSeconds(1, BLENDER_EXPORT_FPS))
+  const targetTimeRef = useRef<number>(frameToSeconds(1, BLENDER_EXPORT_FPS))
+  const startTransitionTimeRef = useRef<number>(frameToSeconds(1, BLENDER_EXPORT_FPS))
+  const transitionProgressRef = useRef<number>(1.0)
+  const transitionDurationRef = useRef<number>(1.0)
+  const isTransitioningRef = useRef<boolean>(false)
+  const gestureCooldownRef = useRef<boolean>(false)
+  const cooldownTimerRef = useRef<any>(null)
+  const prevActiveStepPropRef = useRef<number | undefined>(activeStepProp)
 
   // Configure useGLTF with singleton loaders
   const { scene: modelScene, animations } = useGLTF(
@@ -108,8 +152,8 @@ export const HandsModel: React.FC<HandsModelProps> = ({
     ensureWebGPUGeometry(modelScene)
   }, [modelScene])
 
-  // Hook into animations
-  const { actions, names } = useAnimations(animations, groupRef)
+  // Hook into animations and Drei mixer
+  const { actions, names, mixer } = useAnimations(animations, groupRef)
 
   // Initialize ektogamat's WebGPU Glass Material system
   const glass = useMemo(() => {
@@ -122,6 +166,141 @@ export const HandsModel: React.FC<HandsModelProps> = ({
       glass.dispose()
     }
   }, [glass])
+
+  // Helper to change step and compute target frame / time
+  const goToStep = useCallback(
+    (newStep: number) => {
+      const clamped = Math.max(0, Math.min(newStep, sections.length))
+      // If already at this step and finished transitioning, do not lock and return
+      if (clamped === currentStepRef.current && !isTransitioningRef.current) {
+        gestureCooldownRef.current = false
+        return
+      }
+
+      currentStepRef.current = clamped
+      setInternalStep(clamped)
+
+      // Target Frame logic:
+      // Step 0 -> startFrame of section 0 (Frame 1) -> Reposo inicial en 'AllCards'
+      // Step 1 -> endFrame of section 0 (Frame 62)  -> Carta #1: "VI - CREATIVE DEVELOPER"
+      // Step 2 -> endFrame of section 1 (Frame 122) -> Carta #2: "V - CREATIVE DIRECTOR"
+      const targetFrame =
+        clamped === 0 ? (sections[0]?.startFrame ?? 1) : sections[clamped - 1].endFrame
+
+      const newTargetTime = frameToSeconds(targetFrame, BLENDER_EXPORT_FPS)
+      startTransitionTimeRef.current = currentTimeRef.current
+      targetTimeRef.current = newTargetTime
+      transitionProgressRef.current = 0.0
+
+      const distance = Math.abs(newTargetTime - currentTimeRef.current)
+      transitionDurationRef.current = distance > 0.0001 ? distance : 0.0001
+      isTransitioningRef.current = distance > 0.0001
+      gestureCooldownRef.current = true
+
+      const activeSec = clamped > 0 ? (sections[clamped - 1] ?? null) : null
+      onStepChange?.(clamped, activeSec)
+    },
+    [sections, onStepChange]
+  )
+
+  // Sync when activeStep prop changes from parent (e.g. Leva or UI buttons)
+  useEffect(() => {
+    if (activeStepProp !== undefined && activeStepProp !== prevActiveStepPropRef.current) {
+      prevActiveStepPropRef.current = activeStepProp
+      goToStep(activeStepProp)
+    }
+  }, [activeStepProp, goToStep])
+
+  // ── Scroll, Keyboard & Touch Snap Navigation ────────────────
+  useEffect(() => {
+    if (!enableScrollNavigation) return
+
+    let accumulatedDelta = 0
+    let resetTimer: any = null
+
+    const WHEEL_THRESHOLD = 40
+
+    const handleWheel = (e: WheelEvent) => {
+      // Do not hijack scroll if interacting with Leva GUI panel
+      const targetEl = e.target as HTMLElement | null
+      if (targetEl && targetEl.closest('.leva-c, [class*="leva"]')) {
+        return
+      }
+
+      // If animation is currently transitioning OR in cooldown, completely discard delta
+      if (isTransitioningRef.current || gestureCooldownRef.current) {
+        accumulatedDelta = 0
+        return
+      }
+
+      accumulatedDelta += e.deltaY
+
+      if (resetTimer) clearTimeout(resetTimer)
+      resetTimer = setTimeout(() => {
+        accumulatedDelta = 0
+      }, 150)
+
+      if (accumulatedDelta >= WHEEL_THRESHOLD) {
+        accumulatedDelta = 0
+        gestureCooldownRef.current = true
+        goToStep(currentStepRef.current + 1)
+      } else if (accumulatedDelta <= -WHEEL_THRESHOLD) {
+        accumulatedDelta = 0
+        gestureCooldownRef.current = true
+        goToStep(currentStepRef.current - 1)
+      }
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+      if (isTransitioningRef.current || gestureCooldownRef.current) return
+
+      if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+        e.preventDefault()
+        gestureCooldownRef.current = true
+        goToStep(currentStepRef.current + 1)
+      } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+        e.preventDefault()
+        gestureCooldownRef.current = true
+        goToStep(currentStepRef.current - 1)
+      }
+    }
+
+    let touchStartY = 0
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length > 0) touchStartY = e.touches[0].clientY
+    }
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (isTransitioningRef.current || gestureCooldownRef.current) return
+      if (e.changedTouches.length > 0) {
+        const deltaY = touchStartY - e.changedTouches[0].clientY
+        if (Math.abs(deltaY) > 40) {
+          gestureCooldownRef.current = true
+          if (deltaY > 0) {
+            goToStep(currentStepRef.current + 1)
+          } else {
+            goToStep(currentStepRef.current - 1)
+          }
+        }
+      }
+    }
+
+    window.addEventListener('wheel', handleWheel, { passive: true })
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('touchstart', handleTouchStart, { passive: true })
+    window.addEventListener('touchend', handleTouchEnd, { passive: true })
+
+    return () => {
+      window.removeEventListener('wheel', handleWheel)
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('touchstart', handleTouchStart)
+      window.removeEventListener('touchend', handleTouchEnd)
+      if (resetTimer) clearTimeout(resetTimer)
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current)
+    }
+  }, [enableScrollNavigation, goToStep])
 
   // Synchronize dynamic glass settings and capture backdrop before rendering
   useFrame((state, delta) => {
@@ -168,6 +347,83 @@ export const HandsModel: React.FC<HandsModelProps> = ({
       captureTransmissionBackdrop(state.gl, state.scene, state.camera, time)
     }
 
+    // ── Smooth Timeline Scrubbing & Snapping for 'AllCards' ──
+    if (isPlaying) {
+      const dt = Math.min(delta, 0.1)
+      const speed = Math.max(animationSpeed || 1.0, 0.001)
+
+      if (playMode === 'continuous') {
+        const minTime = frameToSeconds(sections[0]?.startFrame ?? 1, BLENDER_EXPORT_FPS)
+        const maxTime = frameToSeconds(
+          sections[sections.length - 1]?.endFrame ?? 122,
+          BLENDER_EXPORT_FPS
+        )
+        const duration = Math.max(maxTime - minTime, 0.1)
+        let nextTime = currentTimeRef.current + dt * speed
+        if (nextTime > maxTime) {
+          nextTime = minTime + ((nextTime - minTime) % duration)
+        }
+        currentTimeRef.current = nextTime
+      } else {
+        // Step-snap mode
+        const tgt = targetTimeRef.current
+
+        if (isTransitioningRef.current) {
+          const stepDuration = transitionDurationRef.current
+          const progressIncrement = (dt * speed) / stepDuration
+          transitionProgressRef.current = Math.min(
+            1.0,
+            transitionProgressRef.current + progressIncrement
+          )
+          const p = transitionProgressRef.current
+
+          let easedProgress = p
+          if (transitionMode === 'linear') {
+            easedProgress = p
+          } else {
+            // Smoothstep curve: silky smooth start, steady middle, and gentle smooth deceleration ("frenar smooth")
+            easedProgress = p * p * (3 - 2 * p)
+          }
+
+          currentTimeRef.current = THREE.MathUtils.lerp(
+            startTransitionTimeRef.current,
+            tgt,
+            easedProgress
+          )
+
+          if (p >= 1.0) {
+            currentTimeRef.current = tgt
+            isTransitioningRef.current = false
+
+            // Set a short quiet cooldown (280ms) after settling to discard any lingering inertial wheel events
+            if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current)
+            cooldownTimerRef.current = setTimeout(() => {
+              gestureCooldownRef.current = false
+            }, 280)
+          }
+        } else {
+          // Completely settled at target snap frame
+          currentTimeRef.current = tgt
+        }
+      }
+
+      const finalTime = currentTimeRef.current
+      // Quantize time to targetFps if quantizeFps is enabled (e.g. 30 FPS stop-motion/cinematic feel)
+      const displayTime = quantizeFps ? quantizeTimeToFps(finalTime, targetFps) : finalTime
+
+      // Action scrubbing: ONLY 'AllCards' at 100% weight, identical to Blender and external glTF viewers
+      const actionAllCards = actions['AllCards']
+
+      if (actionAllCards) {
+        actionAllCards.time = displayTime
+        actionAllCards.setEffectiveWeight(1.0)
+      }
+
+      // Force the mixer to re-evaluate bone transforms on this exact frame.
+      // Guarantees zero-lag evaluation of bone and skinned mesh positions.
+      mixer.update(0)
+    }
+
     // ── Progressive Tarot Cards Emission Sweep ─────────────────
     if (cardsRef.current.length > 0 && tarotSweep) {
       const {
@@ -189,7 +445,7 @@ export const HandsModel: React.FC<HandsModelProps> = ({
       )
 
       const cardCount = 6
-      const smoothSpeed = smoothing
+      const smoothSpeedParam = smoothing
 
       for (let i = 0; i < cardsRef.current.length; i++) {
         const item = cardsRef.current[i]
@@ -198,9 +454,7 @@ export const HandsModel: React.FC<HandsModelProps> = ({
         let targetEmission = minEmission
 
         if (enabled) {
-          // Normalized center of each card along [0, 1] axis aligned with direction:
-          // 'Izq > Der': Card 0 is 0.083 (left), Card 5 (6_vector) is 0.917 (right)
-          // 'Der > Izq': Card 5 (6_vector) is 0.083 (rightmost card, starts sweep!), Card 0 is 0.917
+          // Normalized center of each card along [0, 1] axis aligned with direction
           const cardCenter =
             direction === 'Izq > Der'
               ? (cardIndex + 0.5) / cardCount
@@ -221,7 +475,7 @@ export const HandsModel: React.FC<HandsModelProps> = ({
         cardEmissions.current[cardIndex] = THREE.MathUtils.damp(
           cardEmissions.current[cardIndex] ?? minEmission,
           targetEmission,
-          smoothSpeed,
+          smoothSpeedParam,
           delta
         )
 
@@ -234,21 +488,26 @@ export const HandsModel: React.FC<HandsModelProps> = ({
     }
   }, -1)
 
-  // Default Action: '1stPose'
+  // ── Animation Initialization ('AllCards' timeline) ─
   useEffect(() => {
-    const targetActionName = names.includes('1stPose') ? '1stPose' : names[0]
-    const action = actions[targetActionName]
-
-    if (action) {
-      action.reset().fadeIn(0.4)
-      if (isPlaying) {
-        action.play()
-        action.paused = false
-      } else {
-        action.play()
-        action.paused = true
+    // Desestimar cualquier otra acción en el modelo para asegurar exclusividad total a 'AllCards'
+    Object.keys(actions).forEach((key) => {
+      if (key !== 'AllCards') {
+        actions[key]?.stop()
       }
-      action.setEffectiveTimeScale(animationSpeed)
+    })
+
+    const actionAllCards = actions['AllCards']
+
+    if (actionAllCards) {
+      actionAllCards.reset().play()
+      actionAllCards.paused = true
+      actionAllCards.setLoop(THREE.LoopOnce, 1)
+      actionAllCards.clampWhenFinished = true
+      // Inicia en reposo absoluto en el Frame 1 esperando la interacción del usuario
+      actionAllCards.time = frameToSeconds(sections[0]?.startFrame ?? 1, BLENDER_EXPORT_FPS)
+      actionAllCards.setEffectiveWeight(1.0)
+      mixer.update(0)
     }
 
     if (onModelLoaded) {
@@ -257,20 +516,19 @@ export const HandsModel: React.FC<HandsModelProps> = ({
       onModelLoaded({ animations: names, nodeCount })
     }
 
-    return () => {
-      action?.fadeOut(0.3)
+    // Expose devtools navigator for testing
+    ; (window as any).__TAROT_NAV = {
+      getStep: () => currentStepRef.current,
+      goToStep,
+      getFrame: () => secondsToFrame(currentTimeRef.current, BLENDER_EXPORT_FPS),
+      getTime: () => currentTimeRef.current,
+      sections
     }
-  }, [actions, names, modelScene])
 
-  // Animation play/pause & speed
-  useEffect(() => {
-    const targetActionName = names.includes('1stPose') ? '1stPose' : names[0]
-    const action = actions[targetActionName]
-    if (action) {
-      action.paused = !isPlaying
-      action.setEffectiveTimeScale(animationSpeed)
+    return () => {
+      actionAllCards?.fadeOut(0.3)
     }
-  }, [isPlaying, animationSpeed, actions, names])
+  }, [actions, names, modelScene, goToStep, sections, onModelLoaded, mixer])
 
   // Setup materials: glass for hands, configure emission for 6 tarot cards
   useEffect(() => {

@@ -293,7 +293,7 @@ export default function App() {
       label: 'Far Clip / Draw Dist'
     },
     parallaxIntensity: {
-      value: 0.05,
+      value: 0.02,
       min: 0,
       max: 0.25,
       step: 0.005,
@@ -571,7 +571,7 @@ export default function App() {
     bloomRadius: { value: 0.3, min: 0.0, max: 1.0, step: 0.05, label: 'Bloom Radius' },
     bloomThreshold: { value: 0.8, min: 0.0, max: 1.5, step: 0.05, label: 'Bloom Threshold' },
 
-    dofEnabled: { value: true, label: 'DoF Activo' },
+    dofEnabled: { value: false, label: 'DoF Activo' },
     dofFocus: { value: 0.30, min: 0.05, max: 2.0, step: 0.01, label: 'DoF Focus Distance' },
     dofAperture: { value: 0.02, min: 0.001, max: 0.2, step: 0.005, label: 'DoF Aperture' },
     dofMaxBlur: { value: 0.02, min: 0.001, max: 0.05, step: 0.001, label: 'DoF Max Blur' },
@@ -592,7 +592,7 @@ export default function App() {
   const fsrControls = useControls('FSR & Nitidez (FidelityFX)', {
     enabled: { value: true, label: 'FSR Activo' },
     qualityMode: {
-      value: 'native',
+      value: 'performance',
       options: ['native', 'ultra-quality', 'quality', 'balanced', 'performance'],
       label: 'Modo de Calidad'
     },
@@ -763,17 +763,52 @@ export default function App() {
   })
 
   // ── 7. Animation Controls ────────────────────────────────────
-  const animControls = useControls('Animación', {
+  const animControls = useControls('Animación & Tarot Timeline', {
     isPlaying: {
       value: true,
       label: 'Reproducir'
     },
+    playMode: {
+      value: 'step-snap',
+      options: ['step-snap', 'continuous'],
+      label: 'Modo Reproducción'
+    },
+    activeStep: {
+      value: 0,
+      options: {
+        '0 - Reposo (AllCards / Frame 1)': 0,
+        '1 - Carta VI Creative Developer (Frame 62)': 1,
+        '2 - Carta V Creative Director (Frame 122)': 2
+      },
+      label: 'Paso / Carta Tarot'
+    },
     animationSpeed: {
-      value: 1.0,
+      value: 0.6,
       min: 0.1,
       max: 3.0,
-      step: 0.1,
+      step: 0.05,
       label: 'Velocidad'
+    },
+    quantizeFps: {
+      value: false,
+      label: 'Bajar a 30 FPS (Blender Look)'
+    },
+    targetFps: {
+      value: 30,
+      options: [15, 24, 30, 60],
+      label: 'FPS de Cuantización (Stop-Motion)'
+    },
+    transitionMode: {
+      value: 'linear',
+      options: ['smooth', 'linear'],
+      label: 'Curva Transición'
+    },
+    smoothSpeed: {
+      value: 4.5,
+      min: 1.0,
+      max: 12.0,
+      step: 0.5,
+      label: 'Suavizado (Smooth Speed)'
     }
   })
 
@@ -796,7 +831,7 @@ export default function App() {
       label: 'Emisión Default (Base)'
     },
     maxEmission: {
-      value: 5.0,
+      value: 2,
       min: 0.5,
       max: 50.0,
       step: 0.1,
@@ -819,7 +854,7 @@ export default function App() {
   })
 
   // ── 8. Model Transform Controls ──────────────────────────────
-  const modelControls = useControls('Modelo Manos (hands_skills.glb)', {
+  const modelControls = useControls('Modelo Manos (hands_skills_compressed.glb)', {
     position: {
       value: { x: 0, y: -0.12, z: 0.12 },
       step: 0.01,
@@ -912,12 +947,12 @@ export default function App() {
       label: 'Regresión Suave (Lerp)'
     },
     minDpr: {
-      value: 0.6,
+      value: 0.7,
       disabled: true,
       label: 'DPR Mínimo Base'
     },
     maxDpr: {
-      value: 0.80,
+      value: 0.95,
       disabled: true,
       label: 'DPR Máximo Base'
     },
@@ -933,7 +968,7 @@ export default function App() {
   // ── 12. Auditor de Rendimiento WebGPU (r3f-webgpu-perf) ─────
   const webgpuPerfControls = useControls('Auditor WebGPU (r3f-webgpu-perf)', {
     enabled: {
-      value: false,
+      value: true,
       label: 'Activar HUD Perf'
     },
     position: {
@@ -1155,6 +1190,12 @@ export default function App() {
             <HandsModel
               isPlaying={animControls.isPlaying}
               animationSpeed={animControls.animationSpeed}
+              activeStep={animControls.activeStep}
+              quantizeFps={animControls.quantizeFps}
+              targetFps={animControls.targetFps}
+              transitionMode={animControls.transitionMode as any}
+              smoothSpeed={animControls.smoothSpeed}
+              playMode={animControls.playMode as any}
               position={[
                 modelControls.position.x,
                 modelControls.position.y,
